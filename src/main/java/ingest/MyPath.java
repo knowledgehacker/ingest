@@ -17,7 +17,6 @@ public class MyPath {
     public MyPath(Configuration conf, Path path) throws IOException {
         _path = path;
         _scheme = _path.toUri().getScheme();
-        System.out.println("_scheme: " + _scheme);
         _fs = path.getFileSystem(conf);
     }
 

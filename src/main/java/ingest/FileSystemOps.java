@@ -27,6 +27,8 @@ public class FileSystemOps {
     }
 
     public void copy(MyPath in, MyPath out) throws IOException {
+		System.out.println("copy...");
+
         FileSystem inFS = in.getFileSystem();
         Path inPath = in.getPath();
         InputStream is = inFS.open(inPath, _bufferSize);
@@ -57,7 +59,7 @@ public class FileSystemOps {
     }
 
     public final void move(MyPath from, MyPath to) throws IOException {
-        if(from.getScheme().equals(to.getScheme()))
+        if(!from.getScheme().equals(to.getScheme()))
             throw new RuntimeException("Files " + from.getPath() + " and " + to.getPath() + " have different schemes.");
 
         FileSystem fromFS = from.getFileSystem();

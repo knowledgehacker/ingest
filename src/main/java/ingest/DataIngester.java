@@ -9,6 +9,8 @@ import java.util.ArrayList;
 import java.io.File;
 import java.io.InputStream;
 import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
@@ -76,6 +78,11 @@ public class DataIngester {
         System.out.println("_threadNum: " + _threadNum);
 
         _conf = new Configuration();
+		_conf.addResource(new Path("/opt/hadoop-2.4.1/etc/hadoop/core-site.xml"));
+    	_conf.addResource(new Path("/opt/hadoop-2.4.1/etc/hadoop/hdfs-site.xml"));
+    	_conf.addResource(new Path("/opt/hadoop-2.4.1/etc/hadoop/mapred-site.xml"));
+		_conf.set("fs.defaultFS", "hdfs://namenode:9000");
+        _conf.set("hadoop.job.ugi", "hdfs");
 
         _ops = new FileSystemOps(4096, _needsVerify);
         _logFiles = new ArrayList<MyPath>();
@@ -83,16 +90,24 @@ public class DataIngester {
 
     public void ingest() throws IOException {
         // copy files in _sourceDir/[data_center]/binary/[ack|bin]-server_id-timestamp.log.gz to _destinationDir/[ack|bin]-server_id-timestamp.log.gz
-        File dataSourceDir = new File(_sourceDir);
-        System.out.println("dataSourceDir: " + dataSourceDir.getPath());
+        File dataSourceDir = null;
+		try {
+			dataSourceDir = new File(new URI(_sourceDir));
+		} catch(URISyntaxException urise) {
+            System.out.println(urise);
+        }
+
+		System.out.println("dataSourceDir: " + dataSourceDir.getPath());
         File[] dataCenterDirs = dataSourceDir.listFiles();
         for(File datacenterDir: dataCenterDirs) {
             File binaryDir = new File(datacenterDir, "binary");
             File[] logFiles = binaryDir.listFiles();
             for(File logFile: logFiles) {
-                String[] parts = logFile.getName().split("-");
+				System.out.println("logFile: " + logFile.getPath());
+				String logFileName = logFile.getName();
+                String[] parts = logFileName.substring(0, logFileName.indexOf('.')).split("-");
                 String timestamp = parts[parts.length-1];
-                if(timestamp.compareTo(_dateStart) > 0 && timestamp.compareTo(_dateEnd) > 0) {
+                if(timestamp.compareTo(_dateStart) >= 0 && timestamp.compareTo(_dateEnd) <= 0) {
                     MyPath sourceFile = new MyPath(_conf, new Path(_sourceDir + "/" + datacenterDir.getName() + "/" + binaryDir.getName() + "/" + logFile.getName()));
                     MyPath workFile = new MyPath(_conf, new Path(_workDir + "/" + logFile.getName()));
                     _ops.move(sourceFile, workFile);
