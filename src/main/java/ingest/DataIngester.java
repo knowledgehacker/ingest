@@ -43,7 +43,8 @@ public class DataIngester {
     private Configuration _conf;
 
     private FileSystemOps _ops;
-    private List<MyPath> _logFiles;
+    private List<MyPath> _binLogFiles;
+    private List<MyPath> _ackLogFiles;
 
     public DataIngester() {
 
@@ -73,7 +74,8 @@ public class DataIngester {
         _conf = new Configuration();
 
         _ops = new FileSystemOps(4096, _verify);
-        _logFiles = new ArrayList<MyPath>();
+        _binLogFiles = new ArrayList<MyPath>();
+        _ackLogFiles = new ArrayList<MyPath>();
     }
 
     public void ingest() throws IOException {
@@ -91,7 +93,7 @@ public class DataIngester {
             File[] logFiles = binaryDir.listFiles();
             for(File logFile: logFiles) {
 				String logFileName = logFile.getName();
-                if(!(logFileName.startsWith("ack") || logFileName.startsWith("bin")))
+                if(!(logFileName.startsWith("bin") || logFileName.startsWith("ack")))
                     continue;
                 String[] parts = logFileName.substring(0, logFileName.indexOf('.')).split("-");
                 String timestamp = parts[parts.length-1];
@@ -100,19 +102,62 @@ public class DataIngester {
                     MyPath workFile = new MyPath(_conf, new Path(_workDir + "/" + logFile.getName()));
                     _ops.move(sourceFile, workFile);
 
-                    _logFiles.add(workFile);
+                    if(logFileName.startsWith("bin"))
+                        _binLogFiles.add(workFile);
+                    else
+                        _ackLogFiles.add(workFile);
                 }
             }
         }
 
-        int partitionSize = _logFiles.size() / _threadNum;
-        int extraSize = _logFiles.size() % _threadNum;
-        for(int i = 0; i < extraSize; ++i)
-            new Worker(_conf, _ops, _logFiles.subList(i*(partitionSize+1), (i+1)*(partitionSize+1)), _workDir, _destinationDir).start();
+        List<Worker> binWorkers = new ArrayList<Worker>();
+        int binLogFileNum = _binLogFiles.size();
+        if(binLogFileNum > 0) {
+            int partitionSize = binLogFileNum / _threadNum;
+            int extraSize = binLogFileNum % _threadNum;
+            if(extraSize > 0) {
+                for (int i = 0; i < extraSize; ++i) {
+                    Worker worker = new Worker(_conf, _ops, _binLogFiles.subList(i * (partitionSize + 1), (i + 1) * (partitionSize + 1)), _workDir, _destinationDir);
+                    worker.start();
 
-        int startIdx = extraSize * (partitionSize+1);
-        for(int j = extraSize; j < _threadNum; ++j)
-            new Worker(_conf, _ops, _logFiles.subList(j*partitionSize+startIdx, (j+1)*partitionSize+startIdx), _workDir, _destinationDir).start();
+                    binWorkers.add(worker);
+                }
+
+                int startIdx = extraSize * (partitionSize + 1) - 1;
+                for (int j = extraSize; j < _threadNum; ++j) {
+                    Worker worker = new Worker(_conf, _ops, _binLogFiles.subList(j * partitionSize + startIdx, (j + 1) * partitionSize + startIdx), _workDir, _destinationDir);
+                    worker.start();
+
+                    binWorkers.add(worker);
+                }
+            } else {
+                for(int i = 0; i < _threadNum; ++i) {
+                    Worker worker = new Worker(_conf, _ops, _binLogFiles.subList(i * partitionSize, (i + 1) * partitionSize), _workDir, _destinationDir);
+                    worker.start();
+
+                    binWorkers.add(worker);
+                }
+            }
+        }
+
+        Worker ackWorker = null;
+        if(_ackLogFiles.size() > 0) {
+            ackWorker = new Worker(_conf, _ops, _ackLogFiles, _workDir, _destinationDir);
+            ackWorker.start();
+        }
+
+        for (Worker binWorker : binWorkers)
+            try {
+                binWorker.join();
+            } catch (InterruptedException ie) {
+                // TODO: handle interrupted exception 'ie'
+            }
+        if(ackWorker != null)
+            try {
+                ackWorker.join();
+            } catch (InterruptedException ie) {
+                // TODO: handle interrupted exception 'ie'
+            }
     }
 
     public static void main(String[] args) throws IOException {

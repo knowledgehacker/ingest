@@ -31,6 +31,10 @@ public class Worker extends Thread {
     }
 
     public void run() {
+        System.out.println("Thread " + Thread.currentThread().getName() + " running...");
+        for(MyPath logFile: _logFiles)
+            System.out.println(logFile.getPath());
+        System.out.println("*****");
 		/*
 		try {
 			UserGroupInformation ugi = UserGroupInformation.createRemoteUser("hdfs");

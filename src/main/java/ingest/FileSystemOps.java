@@ -38,7 +38,7 @@ public class FileSystemOps {
         try {
             is = inFS.open(inPath, _bufferSize);
             if (outFS.exists(outPath))
-                throw new RuntimeException("Can't copy file " + inPath.getName() + " to file " + outPath.getName() + " which already exists.");
+                outFS.delete(outPath, false);
             os = outFS.create(outPath);
 
             if (_verify)
@@ -91,7 +91,10 @@ public class FileSystemOps {
 
         FileSystem fromFS = from.getFileSystem();
         FileSystem toFS = to.getFileSystem();
-        fromFS.rename(from.getPath(), to.getPath());
+        Path toPath = to.getPath();
+        if(toFS.exists(toPath))
+            toFS.delete(toPath, false);
+        fromFS.rename(from.getPath(), toPath);
 
         /*
         FileSystem fromFS = from.getFileSystem();
