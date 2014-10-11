@@ -29,7 +29,7 @@ public class DataIngester {
     private final String DATA_SOURCE_DIR = "data.source.dir";
     private final String DATA_WORK_DIR = "data.work.dir";
     private final String DATA_DESTINATION_DIR = "data.destination.dir";
-    private final String NEEDS_VERIFY = "needs.verify";
+    private final String VERIFY = "verify";
     private final String THREAD_NUM = "thread.num";
 
     private String _dateStart;
@@ -37,7 +37,7 @@ public class DataIngester {
     private String _sourceDir;
     private String _workDir;
     private String _destinationDir;
-    private boolean _needsVerify;
+    private boolean _verify;
     private int _threadNum;
 
     private Configuration _conf;
@@ -67,24 +67,12 @@ public class DataIngester {
         _sourceDir = properties.getProperty(DATA_SOURCE_DIR);
         _workDir = properties.getProperty(DATA_WORK_DIR);
         _destinationDir = properties.getProperty(DATA_DESTINATION_DIR);
-        _needsVerify = Boolean.parseBoolean(properties.getProperty(NEEDS_VERIFY));
+        _verify = Boolean.parseBoolean(properties.getProperty(VERIFY));
         _threadNum = Integer.parseInt(properties.getProperty(THREAD_NUM));
-        System.out.println("_dateStart: " + _dateStart);
-        System.out.println("_dateEnd: " + _dateEnd);
-        System.out.println("_sourceDir: " + _sourceDir);
-        System.out.println("_workDir: " + _workDir);
-        System.out.println("_destinationDir: " + _destinationDir);
-        System.out.println("_needsVerify: " + _needsVerify);
-        System.out.println("_threadNum: " + _threadNum);
 
         _conf = new Configuration();
-		_conf.addResource(new Path("/opt/hadoop-2.4.1/etc/hadoop/core-site.xml"));
-    	_conf.addResource(new Path("/opt/hadoop-2.4.1/etc/hadoop/hdfs-site.xml"));
-    	_conf.addResource(new Path("/opt/hadoop-2.4.1/etc/hadoop/mapred-site.xml"));
-		_conf.set("fs.defaultFS", "hdfs://namenode:9000");
-        _conf.set("hadoop.job.ugi", "hdfs");
 
-        _ops = new FileSystemOps(4096, _needsVerify);
+        _ops = new FileSystemOps(4096, _verify);
         _logFiles = new ArrayList<MyPath>();
     }
 
@@ -94,17 +82,17 @@ public class DataIngester {
 		try {
 			dataSourceDir = new File(new URI(_sourceDir));
 		} catch(URISyntaxException urise) {
-            System.out.println(urise);
+			throw new RuntimeException("Open directory " + dataSourceDir + " failed - " + urise.toString());
         }
 
-		System.out.println("dataSourceDir: " + dataSourceDir.getPath());
         File[] dataCenterDirs = dataSourceDir.listFiles();
         for(File datacenterDir: dataCenterDirs) {
             File binaryDir = new File(datacenterDir, "binary");
             File[] logFiles = binaryDir.listFiles();
             for(File logFile: logFiles) {
-				System.out.println("logFile: " + logFile.getPath());
 				String logFileName = logFile.getName();
+                if(!(logFileName.startsWith("ack") || logFileName.startsWith("bin")))
+                    continue;
                 String[] parts = logFileName.substring(0, logFileName.indexOf('.')).split("-");
                 String timestamp = parts[parts.length-1];
                 if(timestamp.compareTo(_dateStart) >= 0 && timestamp.compareTo(_dateEnd) <= 0) {
@@ -120,11 +108,11 @@ public class DataIngester {
         int partitionSize = _logFiles.size() / _threadNum;
         int extraSize = _logFiles.size() % _threadNum;
         for(int i = 0; i < extraSize; ++i)
-            new WorkerThread(_conf, _ops, _logFiles.subList(i*(partitionSize+1), (i+1)*(partitionSize+1)), _workDir, _destinationDir).start();
+            new Worker(_conf, _ops, _logFiles.subList(i*(partitionSize+1), (i+1)*(partitionSize+1)), _workDir, _destinationDir).start();
 
         int startIdx = extraSize * (partitionSize+1);
         for(int j = extraSize; j < _threadNum; ++j)
-            new WorkerThread(_conf, _ops, _logFiles.subList(j*partitionSize+startIdx, (j+1)*partitionSize+startIdx), _workDir, _destinationDir).start();
+            new Worker(_conf, _ops, _logFiles.subList(j*partitionSize+startIdx, (j+1)*partitionSize+startIdx), _workDir, _destinationDir).start();
     }
 
     public static void main(String[] args) throws IOException {

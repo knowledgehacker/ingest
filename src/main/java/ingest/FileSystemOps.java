@@ -17,45 +17,72 @@ public class FileSystemOps {
     private final int _bufferSize;
     private final byte[] _buffer;
 
-    private final boolean _needsVerify;
+    private final boolean _verify;
 
-    public FileSystemOps(int bufferSize, boolean needsVerify) {
+    public FileSystemOps(int bufferSize, boolean verify) {
         _bufferSize = bufferSize;
         _buffer = new byte[bufferSize];
 
-        _needsVerify = needsVerify;
+        _verify = verify;
     }
 
-    public void copy(MyPath in, MyPath out) throws IOException {
-		System.out.println("copy...");
+    public void copy(MyPath in, MyPath out) {
+        long start = System.currentTimeMillis();
 
         FileSystem inFS = in.getFileSystem();
         Path inPath = in.getPath();
-        InputStream is = inFS.open(inPath, _bufferSize);
-
+        InputStream is = null;
         FileSystem outFS = out.getFileSystem();
         Path outPath = out.getPath();
-        if(outFS.exists(outPath))
-            throw new RuntimeException("Can't copy file " + inPath.getName() + " to file " + outPath.getName() + " which already exists.");
-        OutputStream os = outFS.create(outPath);
+        OutputStream os = null;
+        try {
+            is = inFS.open(inPath, _bufferSize);
+            if (outFS.exists(outPath))
+                throw new RuntimeException("Can't copy file " + inPath.getName() + " to file " + outPath.getName() + " which already exists.");
+            os = outFS.create(outPath);
 
-        int bytesRead = -1;
-        if(_needsVerify) {
-            CRC32 inCrc32 = new CRC32();
-            CheckedInputStream checkedInputStream = new CheckedInputStream(is, inCrc32);
+            if (_verify)
+                checkedWrite(is, outFS, outPath, os);
+            else
+                uncheckedWrite(is, os);
+        } catch (IOException ioe) {
+            // TODO: alert by e-mail
+            throw new RuntimeException("Copy file " + inPath.getName() + " failed - " + ioe.toString());
+        } finally {
+            if(is != null)
+                try {
+                    is.close();
+                }catch(IOException e) {
 
-            CRC32 outCrc32 = new CRC32();
-            CheckedOutputStream checkedOutputStream = new CheckedOutputStream(os, outCrc32);
+                }
+            if(os != null)
+                try {
+                    os.close();
+                }catch(IOException e) {
 
-            while ((bytesRead = checkedInputStream.read(_buffer, 0, _bufferSize)) == _bufferSize)
-                checkedOutputStream.write(_buffer, 0, bytesRead);
-
-            if(inCrc32 != outCrc32)
-                throw new RuntimeException("File " + outPath.getName() + " is corrupted during copying.");
-        } else {
-            while ((bytesRead = is.read(_buffer, 0, _bufferSize)) == _bufferSize)
-                os.write(_buffer, 0, bytesRead);
+                }
         }
+        System.out.println("Copy file " + inPath.getName() + " to file " + outPath.getName() + " takes " + (System.currentTimeMillis() - start) + " milliseconds.");
+    }
+
+    private final void checkedWrite(InputStream is, FileSystem outFS, Path outPath, OutputStream os) throws IOException {
+        CRC32 inCrc32 = new CRC32();
+        is = new CheckedInputStream(is, inCrc32);
+        int bytesRead = -1;
+        while ((bytesRead = is.read(_buffer, 0, _bufferSize)) > 0)
+            os.write(_buffer, 0, bytesRead);
+
+        CRC32 outCrc32 = new CRC32();
+        is = new CheckedInputStream(outFS.open(outPath, _bufferSize), outCrc32);
+        while (is.read(_buffer, 0, _bufferSize) > 0);
+        if(inCrc32 != outCrc32)
+            throw new RuntimeException("File " + outPath.getName() + " is corrupted during copying.");
+    }
+
+    private final void uncheckedWrite(InputStream is, OutputStream os) throws IOException {
+        int bytesRead = -1;
+        while ((bytesRead = is.read(_buffer, 0, _bufferSize)) > 0)
+            os.write(_buffer, 0, bytesRead);
     }
 
     public final void move(MyPath from, MyPath to) throws IOException {
@@ -65,6 +92,18 @@ public class FileSystemOps {
         FileSystem fromFS = from.getFileSystem();
         FileSystem toFS = to.getFileSystem();
         fromFS.rename(from.getPath(), to.getPath());
+
+        /*
+        FileSystem fromFS = from.getFileSystem();
+        Path fromPath = from.getPath();
+        InputStream is = fromFS.open(fromPath, _bufferSize);
+        FileSystem toFS = to.getFileSystem();
+        Path toPath = to.getPath();
+        if (toFS.exists(toPath))
+            throw new RuntimeException("Can't copy file " + fromPath.getName() + " to file " + toPath.getName() + " which already exists.");
+        OutputStream os = fromFS.create(fromPath);
+        uncheckedWrite(is, os);
+        */
     }
 
     public final void delete(MyPath path) throws IOException {
