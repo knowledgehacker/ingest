@@ -31,11 +31,9 @@ public class Worker extends Thread {
     }
 
     public void run() {
-        System.out.println("Thread " + Thread.currentThread().getName() + " running...");
         for(MyPath logFile: _logFiles)
-            System.out.println(logFile.getPath());
-        System.out.println("*****");
-		/*
+            System.out.println("Thread " + Thread.currentThread().getName() + " - " + logFile.getPath());
+
 		try {
 			UserGroupInformation ugi = UserGroupInformation.createRemoteUser("hdfs");
             ugi.doAs(new PrivilegedExceptionAction<Void>() {
@@ -47,9 +45,8 @@ public class Worker extends Thread {
 		} catch (Exception e) {
 			throw new RuntimeException(e);
 		}
-		*/
 		
-		copy();
+		//copy();
     }
 
     public void copy() {
