@@ -86,7 +86,7 @@ public class DataIngester {
             File[] logFiles = binaryDir.listFiles();
             for(File logFile: logFiles) {
 				String logFileName = logFile.getName();
-                if(!(logFileName.startsWith("ack") || logFileName.startsWith("bin")))
+                if(!(logFileName.startsWith("bin") || logFileName.startsWith("ack")))
                     continue;
                 String[] parts = logFileName.substring(0, logFileName.indexOf('.')).split("-");
                 String timestamp = parts[parts.length-1];
@@ -117,31 +117,47 @@ public class DataIngester {
                     startIdx += partitionSize+1;
                 }
 
-                startIdx -= 1;
-                for (int j = extraSize; j < _threadNum; ++j) {
-                    Worker worker = new Worker(_conf, _binLogFiles.subList(startIdx, startIdx+partitionSize),
-					    _destinationDir, _verify);
+                   if(logFileName.startsWith("bin"))
+                        _binLogFiles.add(workFile);
+                    else
+                        _ackLogFiles.add(workFile);
+                }
+            }
+        }
+
+        List<Worker> binWorkers = new ArrayList<Worker>();
+        int binLogFileNum = _binLogFiles.size();
+        if(binLogFileNum > 0) {
+            int partitionSize = binLogFileNum / _threadNum;
+            int extraSize = binLogFileNum % _threadNum;
+            if(extraSize > 0) {
+                for (int i = 0; i < extraSize; ++i) {
+                    Worker worker = new Worker(_conf, _ops, _binLogFiles.subList(i * (partitionSize + 1), (i + 1) * (partitionSize + 1)), _workDir, _destinationDir);
                     worker.start();
 
                     binWorkers.add(worker);
-                    startIdx += partitionSize;
+                }
+
+                int startIdx = extraSize * (partitionSize + 1) - 1;
+                for (int j = extraSize; j < _threadNum; ++j) {
+                    Worker worker = new Worker(_conf, _ops, _binLogFiles.subList(j * partitionSize + startIdx, (j + 1) * partitionSize + startIdx), _workDir, _destinationDir);
+                    worker.start();
+
+                    binWorkers.add(worker);
                 }
             } else {
-                int startIdx = 0;
                 for(int i = 0; i < _threadNum; ++i) {
-                    Worker worker = new Worker(_conf,  _binLogFiles.subList(startIdx, startIdx+partitionSize),
-						_destinationDir, _verify);
+                    Worker worker = new Worker(_conf, _ops, _binLogFiles.subList(i * partitionSize, (i + 1) * partitionSize), _workDir, _destinationDir);
                     worker.start();
 
                     binWorkers.add(worker);
-                    startIdx += partitionSize;
                 }
             }
         }
 
         Worker ackWorker = null;
         if(_ackLogFiles.size() > 0) {
-            ackWorker = new Worker(_conf, _ackLogFiles, _destinationDir, _verify);
+            ackWorker = new Worker(_conf, _ops, _ackLogFiles, _workDir, _destinationDir);
             ackWorker.start();
         }
 
