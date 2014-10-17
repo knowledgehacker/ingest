@@ -28,10 +28,12 @@ public class Worker extends Thread {
     }
 
     public void run() {
+				long start = System.currentTimeMillis();
         for(MyPath logFile: _logFiles) {
             MyPath destinationFile = null;
             try {
                 destinationFile = new MyPath(_conf, new Path(_destinationDir + "/" + logFile.getPath().getName()));
+
                 _fsOps.copy(logFile, destinationFile, _verify);
             } catch (IOException ioe) {
                 throw new RuntimeException("Copy file " + logFile.getPath() + " to " + destinationFile.getPath() + " failed - "
