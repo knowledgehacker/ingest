@@ -6,6 +6,8 @@ package ingest;
 import java.util.Properties;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Map;
+import java.util.HashMap;
 import java.io.File;
 import java.io.InputStream;
 import java.io.IOException;
@@ -13,7 +15,6 @@ import java.net.URI;
 import java.net.URISyntaxException;
 
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 
 import org.slf4j.LoggerFactory;
@@ -27,7 +28,6 @@ public class DataIngester {
     private final String DATA_DATE_START = "data.date.start";
     private final String DATA_DATE_END = "data.date.end";
     private final String DATA_SOURCE_DIR = "data.source.dir";
-    private final String DATA_WORK_DIR = "data.work.dir";
     private final String DATA_DESTINATION_DIR = "data.destination.dir";
     private final String VERIFY = "verify";
     private final String THREAD_NUM = "thread.num";
@@ -35,15 +35,14 @@ public class DataIngester {
     private String _dateStart;
     private String _dateEnd;
     private String _sourceDir;
-    private String _workDir;
     private String _destinationDir;
     private boolean _verify;
     private int _threadNum;
 
     private Configuration _conf;
 
-    private FileSystemOps _ops;
-    private List<MyPath> _logFiles;
+    private Map<String, List<MyPath>> _binLogFiles;
+    private List<MyPath> _ackLogFiles;
 
     public DataIngester() {
 
@@ -65,19 +64,17 @@ public class DataIngester {
         if(_dateEnd.length() == 8)
             _dateEnd += "0000";
         _sourceDir = properties.getProperty(DATA_SOURCE_DIR);
-        _workDir = properties.getProperty(DATA_WORK_DIR);
         _destinationDir = properties.getProperty(DATA_DESTINATION_DIR);
         _verify = Boolean.parseBoolean(properties.getProperty(VERIFY));
         _threadNum = Integer.parseInt(properties.getProperty(THREAD_NUM));
 
         _conf = new Configuration();
 
-        _ops = new FileSystemOps(4096, _verify);
-        _logFiles = new ArrayList<MyPath>();
+        _binLogFiles = new HashMap<String, List<MyPath>>();
+        _ackLogFiles = new ArrayList<MyPath>();
     }
 
     public void ingest() throws IOException {
-        // copy files in _sourceDir/[data_center]/binary/[ack|bin]-server_id-timestamp.log.gz to _destinationDir/[ack|bin]-server_id-timestamp.log.gz
         File dataSourceDir = null;
 		try {
 			dataSourceDir = new File(new URI(_sourceDir));
@@ -85,9 +82,9 @@ public class DataIngester {
 			throw new RuntimeException("Open directory " + dataSourceDir + " failed - " + urise.toString());
         }
 
-        File[] dataCenterDirs = dataSourceDir.listFiles();
-        for(File datacenterDir: dataCenterDirs) {
-            File binaryDir = new File(datacenterDir, "binary");
+        File[] servers = dataSourceDir.listFiles();
+        for(File server: servers) {
+            File binaryDir = new File(server, "binary");
             File[] logFiles = binaryDir.listFiles();
             for(File logFile: logFiles) {
 				String logFileName = logFile.getName();
@@ -96,29 +93,132 @@ public class DataIngester {
                 String[] parts = logFileName.substring(0, logFileName.indexOf('.')).split("-");
                 String timestamp = parts[parts.length-1];
                 if(timestamp.compareTo(_dateStart) >= 0 && timestamp.compareTo(_dateEnd) <= 0) {
-                    MyPath sourceFile = new MyPath(_conf, new Path(_sourceDir + "/" + datacenterDir.getName() + "/" + binaryDir.getName() + "/" + logFile.getName()));
-                    MyPath workFile = new MyPath(_conf, new Path(_workDir + "/" + logFile.getName()));
-                    _ops.move(sourceFile, workFile);
-
-                    _logFiles.add(workFile);
+                    String serverName = server.getName();
+                    MyPath sourceFile = new MyPath(_conf, new Path(_sourceDir + "/" + serverName + "/" + binaryDir.getName() + "/" + logFile.getName()));
+                    if(logFileName.startsWith("bin")) {
+                        String dataCenterName = serverName.substring(0, serverName.indexOf("ads"));
+                        List<MyPath> sourceFiles = _binLogFiles.get(dataCenterName);
+                        if(sourceFiles == null)
+                            sourceFiles = new ArrayList<MyPath>();
+                         sourceFiles.add(sourceFile);
+                        _binLogFiles.put(dataCenterName, sourceFiles);
+                    } else
+                        _ackLogFiles.add(sourceFile);
                 }
             }
         }
 
-        int partitionSize = _logFiles.size() / _threadNum;
-        int extraSize = _logFiles.size() % _threadNum;
-        for(int i = 0; i < extraSize; ++i)
-            new Worker(_conf, _ops, _logFiles.subList(i*(partitionSize+1), (i+1)*(partitionSize+1)), _workDir, _destinationDir).start();
+		System.out.println("_threadNum: " + _threadNum + ", bin log file num: " + _binLogFiles.size());
+        Worker[] binWorkers = new Worker[_threadNum];
+        for(int i = 0; i < _threadNum; ++i)
+            binWorkers[i] = new Worker(_conf, _destinationDir, _verify);
 
-        int startIdx = extraSize * (partitionSize+1);
-        for(int j = extraSize; j < _threadNum; ++j)
-            new Worker(_conf, _ops, _logFiles.subList(j*partitionSize+startIdx, (j+1)*partitionSize+startIdx), _workDir, _destinationDir).start();
+        for(Map.Entry<String, List<MyPath>> entry: _binLogFiles.entrySet()) {
+            List<MyPath> bfs = entry.getValue();
+            int bfNum = bfs.size();
+            if(bfNum > 0) {
+                int partitionSize = bfNum / _threadNum;
+                int extraSize = bfNum % _threadNum;
+                if(extraSize > 0) {
+                    int startIdx = 0;
+                    for (int i = 0; i < extraSize; ++i) {
+                        binWorkers[i].assign(bfs.subList(startIdx, startIdx+(partitionSize+1)));
+                        startIdx += partitionSize+1;
+                    }
+
+                    startIdx -= 1;
+                    for (int j = extraSize; j < _threadNum; ++j) {
+                        binWorkers[j].assign(bfs.subList(startIdx, startIdx+partitionSize));
+                        startIdx += partitionSize;
+                    }
+                } else {
+                    int startIdx = 0;
+                    for(int i = 0; i < _threadNum; ++i) {
+                        binWorkers[i].assign(bfs.subList(startIdx, startIdx+partitionSize));
+                        startIdx += partitionSize;
+                    }
+                }
+            }
+        }
+
+        for(int i = 0; i < _threadNum; ++i)
+            binWorkers[i].start();
+
+        Worker ackWorker = null;
+        if(_ackLogFiles.size() > 0) {
+            ackWorker = new Worker(_conf, _destinationDir, _verify);
+            ackWorker.assign(_ackLogFiles);
+            ackWorker.start();
+        }
+
+        /*
+        List<Worker> binWorkers = new ArrayList<Worker>();
+        int binLogFileNum = _binLogFiles.size();
+        if(binLogFileNum > 0) {
+            int partitionSize = binLogFileNum / _threadNum;
+            int extraSize = binLogFileNum % _threadNum;
+            if(extraSize > 0) {
+                int startIdx = 0;
+                for (int i = 0; i < extraSize; ++i) {
+                    Worker worker = new Worker(_conf, _binLogFiles.subList(startIdx, startIdx+(partitionSize+1)),
+					    _destinationDir, _verify);
+                    worker.start();
+
+                    binWorkers.add(worker);
+                    startIdx += partitionSize+1;
+                }
+
+                startIdx -= 1;
+                for (int j = extraSize; j < _threadNum; ++j) {
+                    Worker worker = new Worker(_conf, _binLogFiles.subList(startIdx, startIdx+partitionSize),
+					    _destinationDir, _verify);
+                    worker.start();
+
+                    binWorkers.add(worker);
+                    startIdx += partitionSize;
+                }
+            } else {
+                int startIdx = 0;
+                for(int i = 0; i < _threadNum; ++i) {
+                    Worker worker = new Worker(_conf,  _binLogFiles.subList(startIdx, startIdx+partitionSize),
+						_destinationDir, _verify);
+                    worker.start();
+
+                    binWorkers.add(worker);
+                    startIdx += partitionSize;
+                }
+            }
+        }
+
+        Worker ackWorker = null;
+        if(_ackLogFiles.size() > 0) {
+            ackWorker = new Worker(_conf, _ackLogFiles, _destinationDir, _verify);
+            ackWorker.start();
+        }
+        */
+
+        for (Worker binWorker : binWorkers)
+            try {
+                binWorker.join();
+            } catch (InterruptedException ie) {
+                // TODO: handle interrupted exception 'ie'
+            }
+        if(ackWorker != null)
+            try {
+                ackWorker.join();
+            } catch (InterruptedException ie) {
+                // TODO: handle interrupted exception 'ie'
+            }
     }
 
     public static void main(String[] args) throws IOException {
+        long start = System.currentTimeMillis();
+
         DataIngester ingester = new DataIngester();
         ingester.loadConfig();
 
         ingester.ingest();
+
+        System.out.println("Total time takes: " + (System.currentTimeMillis() - start) + " milliseconds.");
     }
 }
