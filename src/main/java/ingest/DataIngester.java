@@ -217,8 +217,8 @@ public class DataIngester {
         DataIngester ingester = new DataIngester();
         ingester.loadConfig();
 
+				long start = System.currentTimeMillis();
         ingester.ingest();
-
         System.out.println("Total time takes: " + (System.currentTimeMillis() - start) + " milliseconds.");
     }
 }

@@ -3,8 +3,8 @@ package ingest;
 /**
  * Created by mlin on 10/9/14.
  */
-import java.util.ArrayList;
 import java.util.List;
+import java.util.ArrayList;
 import java.io.IOException;
 
 import org.apache.hadoop.conf.Configuration;
