@@ -28,7 +28,6 @@ public class Worker extends Thread {
     }
 
     public void run() {
-				long start = System.currentTimeMillis();
         for(MyPath logFile: _logFiles) {
             MyPath destinationFile = null;
             try {

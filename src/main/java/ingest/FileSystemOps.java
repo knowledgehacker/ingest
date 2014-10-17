@@ -33,7 +33,7 @@ public class FileSystemOps {
             FileSystem outFS = out.getFileSystem();
             Path outPath = out.getPath();
             if (outFS.exists(outPath))
-				outFS.delete(outPath, false);
+                outFS.delete(outPath, false);
             os = outFS.create(outPath);
 
             if (verify)
