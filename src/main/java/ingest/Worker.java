@@ -29,7 +29,6 @@ public class Worker extends Thread {
     }
 
     public void run() {
-        long start = System.currentTimeMillis();
         int count = 0;
         for(MyPath logFile: _logFiles) {
             try {
@@ -48,6 +47,5 @@ public class Worker extends Thread {
             }
             ++count;
         }
-        //System.out.println(Thread.currentThread().getName() + " - copying " + count + " files takes " + (System.currentTimeMillis() - start) + " milliseconds.");
     }
 }
