@@ -30,19 +30,20 @@ public class DataIngester {
     private final String DATA_SOURCE_DIR = "data.source.dir";
     private final String DATA_DESTINATION_DIR = "data.destination.dir";
     private final String VERIFY = "verify";
-    private final String THREAD_NUM = "thread.num";
+    private final String BIN_ACK_RATIO = "bin.ack.ratio";
 
     private String _dateStart;
     private String _dateEnd;
     private String _sourceDir;
     private String _destinationDir;
     private boolean _verify;
-    private int _threadNum;
+    private int _binThreadNum;
+    private int _ackThreadNum;
 
     private Configuration _conf;
 
     private Map<String, List<MyPath>> _binLogFiles;
-    private List<MyPath> _ackLogFiles;
+    private Map<String, List<MyPath>> _ackLogFiles;
 
     public DataIngester() {
 
@@ -66,12 +67,15 @@ public class DataIngester {
         _sourceDir = properties.getProperty(DATA_SOURCE_DIR);
         _destinationDir = properties.getProperty(DATA_DESTINATION_DIR);
         _verify = Boolean.parseBoolean(properties.getProperty(VERIFY));
-        _threadNum = Integer.parseInt(properties.getProperty(THREAD_NUM));
+        int ratio = Integer.parseInt(properties.getProperty(BIN_ACK_RATIO));
+        int processorNum = Runtime.getRuntime().availableProcessors() * 1 / 2;
+        _binThreadNum = ratio * processorNum / (ratio+1);
+        _ackThreadNum = processorNum / (ratio+1);
 
         _conf = new Configuration();
 
         _binLogFiles = new HashMap<String, List<MyPath>>();
-        _ackLogFiles = new ArrayList<MyPath>();
+        _ackLogFiles = new HashMap<String, List<MyPath>>();
     }
 
     public void ingest() throws IOException {
@@ -92,71 +96,71 @@ public class DataIngester {
                 String timestamp = logFileName.substring(logFileName.lastIndexOf('-')+1, logFileName.indexOf('.'));
                 if(timestamp.compareTo(_dateStart) >= 0 && timestamp.compareTo(_dateEnd) <= 0) {
                     String serverName = server.getName();
-                    MyPath sourceFile = new MyPath(_conf, new Path(_sourceDir + "/" + serverName + "/" + binaryDir.getName() + "/" + logFileName));
-                    if(logFileName.startsWith("bin")) {
-                        String dataCenterName = serverName.substring(0, serverName.indexOf("ads"));
-                        List<MyPath> sourceFiles = _binLogFiles.get(dataCenterName);
-                        if(sourceFiles == null)
-                            sourceFiles = new ArrayList<MyPath>();
-                        sourceFiles.add(sourceFile);
-                        _binLogFiles.put(dataCenterName, sourceFiles);
-                    } else
-                        _ackLogFiles.add(sourceFile);
+                    MyPath sourceFile = new MyPath(_conf, new Path(_sourceDir + "/" + serverName + "/" + "binary" + "/" + logFileName));
+                    if(logFileName.startsWith("bin"))
+                        classify(serverName, sourceFile, _binLogFiles);
+                   else
+                        classify(serverName, sourceFile, _ackLogFiles);
                 }
             }
         }
 
-        List<MyPath>[] workLoads = (List<MyPath>[]) new ArrayList[_threadNum];
-        for(int i = 0; i < _threadNum; ++i)
+        // copy bin log files
+        Worker[] binWorkers = dispatch(_binLogFiles, _binThreadNum);
+        // copy ack log files
+        Worker[] ackWorkers = dispatch(_ackLogFiles, _ackThreadNum);
+
+        // wait for bin workers to complete
+        waitForWorkers(binWorkers);
+        // wait for ack workers to complete
+        waitForWorkers(ackWorkers);
+    }
+
+    private final void classify(String serverName, MyPath sourceFile, Map<String, List<MyPath>> dcWorkload) {
+        String dataCenterName = serverName.substring(0, serverName.indexOf("ads"));
+        List<MyPath> sourceFiles = dcWorkload.get(dataCenterName);
+        if(sourceFiles == null)
+            sourceFiles = new ArrayList<MyPath>();
+        sourceFiles.add(sourceFile);
+        dcWorkload.put(dataCenterName, sourceFiles);
+    }
+
+    private final Worker[] dispatch(Map<String, List<MyPath>> dcWorkload, int threadNum) {
+        List<MyPath>[] workLoads = (List<MyPath>[]) new ArrayList[threadNum];
+        for(int i = 0; i < threadNum; ++i)
             workLoads[i] = new ArrayList<MyPath>();
-        for (Map.Entry<String, List<MyPath>> entry : _binLogFiles.entrySet()) {
+
+        int extraIdx = 0;
+        for (Map.Entry<String, List<MyPath>> entry : dcWorkload.entrySet()) {
             List<MyPath> bfs = entry.getValue();
             int bfNum = bfs.size();
             if (bfNum > 0) {
-                int partitionSize = bfNum / _threadNum;
-                int extraSize = bfNum % _threadNum;
-                if (extraSize > 0) {
-                    int startIdx = 0;
-                    for (int i = 0; i < extraSize; ++i) {
-                        workLoads[i].addAll(bfs.subList(startIdx, startIdx + (partitionSize + 1)));
-                        startIdx += partitionSize + 1;
-                    }
-
-                    for (int j = extraSize; j < _threadNum; ++j) {
-                        workLoads[j].addAll(bfs.subList(startIdx, startIdx + partitionSize));
-                        startIdx += partitionSize;
-                    }
-                } else {
-                    int startIdx = 0;
-                    for (int i = 0; i < _threadNum; ++i) {
-                        workLoads[i].addAll(bfs.subList(startIdx, startIdx + partitionSize));
-                        startIdx += partitionSize;
-                    }
+                int partitionSize = bfNum / threadNum;
+                int extraSize = bfNum % threadNum;
+                int startIdx = 0;
+                for (int i = 0; i < threadNum; ++i) {
+                    workLoads[i].addAll(bfs.subList(startIdx, startIdx + partitionSize));
+                    startIdx += partitionSize;
                 }
+                if (extraSize > 0)
+                    for (int j = 0; j < extraSize; ++j)
+                        workLoads[extraIdx++ % threadNum].add(bfs.get(startIdx + j));
             }
         }
 
-        Worker[] binWorkers = new Worker[_threadNum];
-        for (int i = 0; i < _threadNum; ++i) {
-            binWorkers[i] = new Worker(_conf, workLoads[i], _destinationDir, _verify);
-            binWorkers[i].start();
+        Worker[] workers = new Worker[threadNum];
+        for (int i = 0; i < threadNum; ++i) {
+            workers[i] = new Worker(_conf, workLoads[i], _destinationDir, _verify);
+            workers[i].start();
         }
 
-        Worker ackWorker = null;
-        if(_ackLogFiles.size() > 0) {
-            ackWorker = new Worker(_conf, _ackLogFiles, _destinationDir, _verify);
-            ackWorker.start();
-        }
+        return workers;
+    }
 
-        for (Worker binWorker : binWorkers)
+    private final void waitForWorkers(Worker[] workers) {
+        for (Worker worker : workers)
             try {
-                binWorker.join();
-            } catch (InterruptedException ie) {
-                // TODO: handle interrupted exception 'ie'
-            }
-        if(ackWorker != null)
-            try {
-                ackWorker.join();
+                worker.join();
             } catch (InterruptedException ie) {
                 // TODO: handle interrupted exception 'ie'
             }
@@ -168,7 +172,6 @@ public class DataIngester {
         DataIngester ingester = new DataIngester();
         ingester.loadConfig();
 
-				long start = System.currentTimeMillis();
         ingester.ingest();
         System.out.println("Total time takes: " + (System.currentTimeMillis() - start) + " milliseconds.");
     }

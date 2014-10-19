@@ -22,8 +22,6 @@ public class FileSystemOps {
     }
 
     public void copy(MyPath in, MyPath out, boolean verify) throws IOException {
-        long start = System.currentTimeMillis();
-
         InputStream is = null;
         OutputStream os = null;
         try {
@@ -34,7 +32,6 @@ public class FileSystemOps {
             Path outPath = out.getPath();
             if (outFS.exists(outPath))
                 throw new RuntimeException("File " + outPath + " already exists.");
-
             os = outFS.create(outPath);
 
             if (verify)
@@ -47,7 +44,6 @@ public class FileSystemOps {
             if(os != null)
                 os.close();
         }
-        //System.out.println("Copy file " + in.getPath() + " to " + out.getPath() + " takes " + (System.currentTimeMillis() - start) + " milliseconds.");
     }
 
     private final void checkedWrite(InputStream is, OutputStream os, FileSystem outFS, Path outPath) throws IOException {

@@ -3,7 +3,6 @@ package ingest;
 /**
  * Created by mlin on 10/9/14.
  */
-import java.util.ArrayList;
 import java.util.List;
 import java.io.IOException;
 
@@ -21,7 +20,6 @@ public class Worker extends Thread {
     public Worker(Configuration conf, List<MyPath> logFiles, String destinationDir, boolean verify) {
         _conf = conf;
         _logFiles = logFiles;
-
         _destinationDir = destinationDir;
 	    _verify = verify;
         
@@ -29,13 +27,12 @@ public class Worker extends Thread {
     }
 
     public void run() {
-        int count = 0;
         for(MyPath logFile: _logFiles) {
             try {
                 if (!_fsOps.exists(logFile))
                     throw new RuntimeException("File " + logFile.getPath() + " doesn't exist.");
             } catch (IOException ioe) {
-                System.out.println(ioe);
+                throw new RuntimeException("Check whether file " + logFile.getPath() + " exists failed - " + ioe.toString());
             }
             MyPath destinationFile = null;
             try {
@@ -45,7 +42,6 @@ public class Worker extends Thread {
                 throw new RuntimeException("Copy file " + logFile.getPath() + " to " + destinationFile.getPath() + " failed - "
                         + ioe.toString());
             }
-            ++count;
         }
     }
 }
