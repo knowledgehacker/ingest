@@ -3,12 +3,11 @@ package ingest;
 /**
  * Created by mlin on 10/9/14.
  */
+import java.io.IOException;
+
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-
-import java.net.URI;
-import java.io.IOException;
 
 public class MyPath {
     private final String _scheme;
@@ -16,16 +15,10 @@ public class MyPath {
     private final FileSystem _fs;
 
     public MyPath(Configuration conf, Path path) throws IOException {
-        URI uri = path.toUri();
-        _scheme = uri.getScheme();
-        if(_scheme.equals("hdfs")) {
-            String prefix = _scheme + "://";
-            String pathPart = path.toString().substring(prefix.length());
-
-            String defaultFS = conf.get("fs.defaultFS");
-            String absolutePath = prefix + defaultFS.substring(prefix.length()) + "/" + pathPart;
-            _path = new Path(absolutePath);
-        } else
+        _scheme = path.toUri().getScheme();
+        if(_scheme.equals("hdfs"))
+            _path = new Path(conf.get("fs.defaultFS") + "/" + path.toString().substring((_scheme + "://").length()));
+        else
             _path = path;
 
         _fs = _path.getFileSystem(conf);
