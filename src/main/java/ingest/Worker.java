@@ -4,6 +4,7 @@ package ingest;
  * Created by mlin on 10/9/14.
  */
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.io.IOException;
 
 import org.apache.hadoop.conf.Configuration;
@@ -17,16 +18,28 @@ public class Worker extends Thread {
 
     private final FileSystemOps _fsOps;
 
-    public Worker(Configuration conf, List<MyPath> logFiles, String destinationDir, boolean verify) {
+	private final CountDownLatch _startSignal;
+	private final CountDownLatch _doneSignal;
+
+    public Worker(Configuration conf, List<MyPath> logFiles, String destinationDir, boolean verify,
+		CountDownLatch startSignal, CountDownLatch doneSignal) {
         _conf = conf;
         _logFiles = logFiles;
         _destinationDir = destinationDir;
 	    _verify = verify;
         
 		_fsOps = new FileSystemOps(4096);
+
+		_startSignal = startSignal;
+		_doneSignal = doneSignal;
     }
 
     public void run() {
+		try {
+			_startSignal.await();
+		} catch (InterruptedException ie) {
+		}
+
         for(MyPath logFile: _logFiles) {
             try {
                 if (!_fsOps.exists(logFile))
@@ -43,5 +56,7 @@ public class Worker extends Thread {
                         + ioe.toString());
             }
         }
+
+		_doneSignal.countDown();
     }
 }

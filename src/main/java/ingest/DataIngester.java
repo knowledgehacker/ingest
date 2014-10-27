@@ -8,6 +8,8 @@ import java.util.List;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.io.File;
 import java.io.InputStream;
 import java.io.IOException;
@@ -105,16 +107,24 @@ public class DataIngester {
             }
         }
 
-        // copy bin log files
-        Worker[] binWorkers = dispatch(_binLogFiles, _binThreadNum);
-        // copy ack log files
-        Worker[] ackWorkers = dispatch(_ackLogFiles, _ackThreadNum);
-
-        // wait for bin workers to complete
-        waitForWorkers(binWorkers);
-        // wait for ack workers to complete
-        waitForWorkers(ackWorkers);
+		// wait for workers to complete with timeout "45 minutes"
+        waitWorkers(45*60);
     }
+	
+	private final void waitWorkers(long timeout) {
+		CountDownLatch startSignal = new CountDownLatch(1);
+		CountDownLatch doneSignal = new CountDownLatch(_binThreadNum + _ackThreadNum);
+        // copy bin log files
+        dispatch(_binLogFiles, _binThreadNum, startSignal, doneSignal);
+        // copy ack log files
+        dispatch(_ackLogFiles, _ackThreadNum, startSignal, doneSignal);
+		startSignal.countDown();
+		try {
+			if(!doneSignal.await(timeout, TimeUnit.SECONDS))
+				throw new RuntimeException("Copying files failed - time exceeds 45 minutes.");
+		} catch(InterruptedException ie) {
+		}
+	}
 
     private final void classify(String serverName, MyPath sourceFile, Map<String, List<MyPath>> dcWorkload) {
         String dataCenterName = serverName.substring(0, serverName.indexOf("ads"));
@@ -125,7 +135,8 @@ public class DataIngester {
         dcWorkload.put(dataCenterName, sourceFiles);
     }
 
-    private final Worker[] dispatch(Map<String, List<MyPath>> dcWorkload, int threadNum) {
+    private final Worker[] dispatch(Map<String, List<MyPath>> dcWorkload, int threadNum, 
+		CountDownLatch startSignal, CountDownLatch doneSignal) {
         List<MyPath>[] workLoads = (List<MyPath>[]) new ArrayList[threadNum];
         for(int i = 0; i < threadNum; ++i)
             workLoads[i] = new ArrayList<MyPath>();
@@ -150,7 +161,7 @@ public class DataIngester {
 
         Worker[] workers = new Worker[threadNum];
         for (int i = 0; i < threadNum; ++i) {
-            workers[i] = new Worker(_conf, workLoads[i], _destinationDir, _verify);
+            workers[i] = new Worker(_conf, workLoads[i], _destinationDir, _verify, startSignal, doneSignal);
             workers[i].start();
         }
 
