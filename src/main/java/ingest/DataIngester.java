@@ -1,8 +1,8 @@
-package ingest;
-
 /**
  * Created by mlin on 10/9/14.
  */
+package ingest;
+
 import java.util.Properties;
 import java.util.List;
 import java.util.ArrayList;
@@ -47,9 +47,7 @@ public class DataIngester {
     private Map<String, List<MyPath>> _binLogFiles;
     private Map<String, List<MyPath>> _ackLogFiles;
 
-    public DataIngester() {
-
-    }
+    public DataIngester() {}
 
     public void loadConfig() {
         InputStream is = DataIngester.class.getResourceAsStream(CONFIG_FILE);
@@ -115,9 +113,9 @@ public class DataIngester {
 		CountDownLatch startSignal = new CountDownLatch(1);
 		CountDownLatch doneSignal = new CountDownLatch(_binThreadNum + _ackThreadNum);
         // copy bin log files
-        dispatch(_binLogFiles, _binThreadNum, startSignal, doneSignal);
+        assign(_binLogFiles, _binThreadNum, startSignal, doneSignal);
         // copy ack log files
-        dispatch(_ackLogFiles, _ackThreadNum, startSignal, doneSignal);
+        assign(_ackLogFiles, _ackThreadNum, startSignal, doneSignal);
 		startSignal.countDown();
 		try {
 			if(!doneSignal.await(timeout, TimeUnit.SECONDS))
@@ -135,7 +133,7 @@ public class DataIngester {
         dcWorkload.put(dataCenterName, sourceFiles);
     }
 
-    private final Worker[] dispatch(Map<String, List<MyPath>> dcWorkload, int threadNum, 
+    private final void assign(Map<String, List<MyPath>> dcWorkload, int threadNum, 
 		CountDownLatch startSignal, CountDownLatch doneSignal) {
         List<MyPath>[] workLoads = (List<MyPath>[]) new ArrayList[threadNum];
         for(int i = 0; i < threadNum; ++i)
@@ -159,22 +157,8 @@ public class DataIngester {
             }
         }
 
-        Worker[] workers = new Worker[threadNum];
-        for (int i = 0; i < threadNum; ++i) {
-            workers[i] = new Worker(_conf, workLoads[i], _destinationDir, _verify, startSignal, doneSignal);
-            workers[i].start();
-        }
-
-        return workers;
-    }
-
-    private final void waitForWorkers(Worker[] workers) {
-        for (Worker worker : workers)
-            try {
-                worker.join();
-            } catch (InterruptedException ie) {
-                // TODO: handle interrupted exception 'ie'
-            }
+        for (int i = 0; i < threadNum; ++i)
+            new Worker(_conf, workLoads[i], _destinationDir, _verify, startSignal, doneSignal).start();
     }
 
     public static void main(String[] args) throws IOException {

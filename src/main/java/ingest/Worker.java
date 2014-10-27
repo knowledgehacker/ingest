@@ -1,8 +1,8 @@
-package ingest;
-
 /**
  * Created by mlin on 10/9/14.
  */
+package ingest;
+
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.io.IOException;
@@ -10,7 +10,12 @@ import java.io.IOException;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 
+import org.slf4j.LoggerFactory;
+import org.slf4j.Logger;
+
 public class Worker extends Thread {
+	private final Logger LOG = LoggerFactory.getLogger(Worker.class);
+
     private final Configuration _conf;
     private final List<MyPath> _logFiles;
     private final String _destinationDir;
@@ -42,17 +47,19 @@ public class Worker extends Thread {
 
         for(MyPath logFile: _logFiles) {
             try {
-                if (!_fsOps.exists(logFile))
-                    throw new RuntimeException("File " + logFile.getPath() + " doesn't exist.");
+                if (!_fsOps.exists(logFile)) {
+                    LOG.error("File " + logFile.getPath() + " doesn't exist.");
+				}
             } catch (IOException ioe) {
-                throw new RuntimeException("Check whether file " + logFile.getPath() + " exists failed - " + ioe.toString());
+                LOG.error("Check existence of file " + logFile.getPath() + " failed - " + ioe.toString());
             }
+
             MyPath destinationFile = null;
             try {
                 destinationFile = new MyPath(_conf, new Path(_destinationDir + "/" + logFile.getPath().getName()));
                 _fsOps.copy(logFile, destinationFile, _verify);
             } catch (IOException ioe) {
-                throw new RuntimeException("Copy file " + logFile.getPath() + " to " + destinationFile.getPath() + " failed - "
+                LOG.error("Copy file " + logFile.getPath() + " to " + destinationFile.getPath() + " failed - "
                         + ioe.toString());
             }
         }
